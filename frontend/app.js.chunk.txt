@@ -1,0 +1,151 @@
+// frontend/app.js
+let socket;
+let mediaRecorder;
+let isRecording = false;
+let audioContext;
+
+// --- Audio Queue Variables ---
+let audioQueue = [];
+let isPlaying = false;
+let nextStartTime = 0;
+const MIN_BUFFER = 4; // Wait for 4 chunks before playing (Builds a buffer to stop skipping)
+
+function addMessage(text, sender) {
+    const box = document.getElementById('chat-box');
+    const div = document.createElement('div');
+    div.className = `msg ${sender}`;
+    div.innerText = text;
+    box.appendChild(div);
+    box.scrollTop = box.scrollHeight;
+}
+
+// --- WebSocket Connection ---
+async function toggleConnection() {
+    const btn = document.getElementById('start-btn');
+    const status = document.getElementById('status');
+    
+    const urlParams = new URLSearchParams(window.location.search);
+    const leadId = urlParams.get('lead_id') || '1';
+
+    if (!socket || socket.readyState === WebSocket.CLOSED) {
+        status.innerText = "Status: Connecting...";
+        btn.disabled = true;
+
+        socket = new WebSocket(`ws://localhost:8000/ws/agent?lead_id=${leadId}`);
+
+        socket.onopen = async () => {
+            status.innerText = "Status: Connected - Listening...";
+            btn.innerText = "Stop Conversation";
+            btn.disabled = false;
+            btn.onclick = toggleConnection;
+            
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            if (audioContext.state === 'suspended') {
+                await audioContext.resume();
+            }
+            
+            await startMicrophone();
+        };
+
+        socket.onmessage = async (event) => {
+            const data = JSON.parse(event.data);
+            
+            if (data.type === 'transcript') {
+                if (data.is_final) {
+                    addMessage(data.text, 'user');
+                    status.innerText = "Status: AI Thinking...";
+                    stopAudioQueue();
+                }
+            } else if (data.type === 'audio') {
+                // Convert Base64 to Binary
+                const binaryString = atob(data.audio);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+
+                // Decode
+                try {
+                    const audioBuffer = await audioContext.decodeAudioData(bytes.buffer.slice(0));
+                    audioQueue.push(audioBuffer);
+                    
+                    // FIX: Only start playing if we have a buffer (prevents starvation/skipping)
+                    if (!isPlaying && audioQueue.length >= MIN_BUFFER) {
+                        playQueue();
+                    }
+                } catch (e) {
+                    console.error("Audio decode error:", e);
+                }
+
+            } else if (data.type === 'bot_text') {
+                addMessage(data.text, 'bot');
+                status.innerText = "Status: AI Speaking...";
+            }
+        };
+
+        socket.onclose = () => {
+            status.innerText = "Status: Idle";
+            btn.innerText = "Start Conversation";
+            btn.onclick = toggleConnection;
+            stopMicrophone();
+        };
+
+    } else {
+        socket.close();
+    }
+}
+
+function playQueue() {
+    if (audioQueue.length === 0) {
+        isPlaying = false;
+        return;
+    }
+
+    isPlaying = true;
+    const buffer = audioQueue.shift();
+
+    const source = audioContext.createBufferSource();
+    source.buffer = buffer;
+    source.connect(audioContext.destination);
+
+    const startTime = Math.max(audioContext.currentTime, nextStartTime);
+    source.start(startTime);
+    nextStartTime = startTime + buffer.duration;
+
+    source.onended = () => {
+        playQueue();
+    };
+}
+
+function stopAudioQueue() {
+    audioQueue = [];
+    nextStartTime = 0;
+    isPlaying = false;
+}
+
+// --- Microphone ---
+async function startMicrophone() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream);
+        
+        mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0 && socket.readyState === WebSocket.OPEN) {
+                socket.send(event.data); 
+            }
+        };
+
+        mediaRecorder.start(250); 
+        isRecording = true;
+    } catch (err) {
+        console.error("Error accessing microphone:", err);
+        alert("Microphone access denied.");
+    }
+}
+
+function stopMicrophone() {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+        isRecording = false;
+    }
+}

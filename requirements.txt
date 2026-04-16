@@ -1,0 +1,15 @@
+# Force Render to re-fetch dependencies (Cache Buster)
+fastapi
+uvicorn
+gunicorn
+psycopg2-binary
+sqlalchemy
+python-dotenv
+pydantic
+pydantic-settings
+openai
+deepgram-sdk
+elevenlabs
+websockets
+python-multipart
+aiohttp
