@@ -23,7 +23,6 @@
         body {
             font-family: 'Outfit', sans-serif;
             background-color: var(--bg-dark);
-            /* Abstract animated gradient background */
             background-image: 
                 radial-gradient(circle at 10% 20%, rgba(56, 189, 248, 0.15) 0%, transparent 40%),
                 radial-gradient(circle at 90% 80%, rgba(129, 140, 248, 0.15) 0%, transparent 40%);
@@ -55,14 +54,16 @@
             to { opacity: 1; transform: translateY(0); }
         }
 
-        /* Left Panel: AI Visuals */
+        /* --- AI PANEL (Left Side) --- */
         .ai-panel {
             flex: 1;
-            padding: 40px;
+            padding: 40px 30px;
             display: flex;
             flex-direction: column;
             align-items: center;
+            justify-content: flex-start; /* Align from top */
             border-right: 1px solid var(--glass-border);
+            background: rgba(15, 23, 42, 0.5);
             position: relative;
         }
 
@@ -72,15 +73,23 @@
             letter-spacing: 1px;
             text-transform: uppercase;
             color: var(--primary-glow);
-            margin-bottom: auto; /* Push to top */
+            margin-bottom: 40px; /* Space between Logo and Avatar */
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 10px;
+            width: 100%;
+            justify-content: center;
         }
 
+        /* Avatar Container - Centers the rings perfectly */
         .avatar-container {
             position: relative;
-            margin-bottom: 30px;
+            width: 140px;
+            height: 140px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 40px; /* Space between Avatar and Status */
         }
 
         /* Glowing Rings Animation */
@@ -93,6 +102,7 @@
             border: 2px solid var(--primary-glow);
             box-shadow: 0 0 20px rgba(56, 189, 248, 0.2);
             opacity: 0;
+            z-index: 1;
         }
 
         .ring-1 { animation: pulse-ring 3s infinite; }
@@ -104,7 +114,7 @@
         }
 
         .core {
-            width: 120px; height: 120px;
+            width: 110px; height: 110px;
             background: linear-gradient(135deg, var(--primary-glow), var(--secondary-glow));
             border-radius: 50%;
             display: flex;
@@ -112,11 +122,11 @@
             justify-content: center;
             box-shadow: 0 0 30px rgba(56, 189, 248, 0.4);
             position: relative;
-            z-index: 2;
+            z-index: 2; /* Sit on top of rings */
         }
 
         .core-icon {
-            width: 60px; height: 60px;
+            width: 50px; height: 50px;
             fill: white;
         }
 
@@ -125,12 +135,12 @@
             font-size: 0.85rem;
             font-weight: 500;
             color: var(--text-muted);
-            margin-bottom: 40px;
+            margin-bottom: auto; /* Pushes button to bottom */
             text-transform: uppercase;
             letter-spacing: 2px;
             text-align: center;
-            min-height: 24px;
-            text-shadow: 0 0 10px rgba(255,255,255,0.1);
+            width: 100%;
+            padding: 0 10px;
         }
 
         /* Action Button */
@@ -138,7 +148,7 @@
             background: var(--text-main);
             color: var(--bg-dark);
             border: none;
-            padding: 16px 48px;
+            padding: 16px 40px;
             border-radius: 50px;
             font-size: 1rem;
             font-weight: 700;
@@ -147,7 +157,10 @@
             box-shadow: 0 0 25px rgba(255, 255, 255, 0.3);
             display: flex;
             align-items: center;
+            justify-content: center;
             gap: 10px;
+            width: 100%; /* Full width for better alignment */
+            margin-top: 20px;
         }
 
         #start-btn:hover {
@@ -162,7 +175,7 @@
             box-shadow: none;
         }
 
-        /* Right Panel: Transcript */
+        /* --- CHAT PANEL (Right Side) --- */
         .chat-panel {
             flex: 1.5;
             background: rgba(15, 23, 42, 0.4);
@@ -185,7 +198,7 @@
             background: var(--primary-glow);
             border-radius: 50%;
             box-shadow: 0 0 10px var(--primary-glow);
-            display: none; /* Hidden by default */
+            display: none;
         }
 
         #chat-box {
@@ -195,7 +208,6 @@
             display: flex;
             flex-direction: column;
             gap: 16px;
-            /* Scrollbar Styling */
             scrollbar-width: thin;
             scrollbar-color: var(--glass-border) transparent;
         }
@@ -265,7 +277,7 @@
             <div id="status">Status: Idle</div>
 
             <!-- JS Target: Button -->
-            <button id="start-btn">
+            <button id="start-btn" onclick="toggleConnection()">
                 Start Conversation
             </button>
         </div>
