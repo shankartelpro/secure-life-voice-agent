@@ -1,7 +1,5 @@
 # insurance_voice_agent/app.py
-# insurance_voice_agent/main.py
 import uvicorn
-from app import app
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
