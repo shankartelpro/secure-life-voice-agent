@@ -1,10 +1,9 @@
 # insurance_voice_agent/app.py
-import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
-from contextlib import asynccontextmanager
+import uvicorn
 from pathlib import Path
 
 # Local Imports
@@ -15,40 +14,18 @@ from services.voice import deepgram_transcription_stream, text_to_speech_stream
 from api.routes import router as lead_router
 from utils.logger import log
 
-import json
-import base64
-import asyncio
-from dotenv import load_dotenv
-import os
-
+# --- NEW IMPORTS ---
+from lifespan import lifespan # Import our custom context manager
 from config import validate_keys
 
-validate_keys()
+validate_keys() # Validate keys on startup
 
 # --- Lifespan Event Handler ---
-@asynccontextmanager
-# --- Lifespan Event Handler ---
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Startup
-    log.info("Application Starting up...")
-    
-    try:
-        # FIX: check_first=True prevents the crash on Render
-        Base.metadata.create_all(bind=engine, check_first=True)
-        log.info("Database tables checked/created.")
-    except Exception as e:
-        # This catches the "already exists" error so the server doesn't crash
-        log.warning(f"Database check warning: {e}")
-        pass # Don't re-raise the error
-        
-    yield
-    # Shutdown
-    log.info("Application Shutting down...")
-# --- Create App ---
+# Note: We no longer use @asynccontextmanager decorator here.
+# The 'lifespan' function returns our AppLifespan class.
 app = FastAPI(
     title="SecureLife AI Agent",
-    lifespan=lifespan
+    lifespan=lifespan 
 )
 
 # CORS Middleware
@@ -208,10 +185,6 @@ async def websocket_endpoint(websocket: WebSocket, lead_id: int = Query(...), db
 BASE_DIR = Path(__file__).resolve().parent
 FRONTEND_DIR = BASE_DIR / "frontend"
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="static")
-
-
-
-# ... imports and code ...
 
 if __name__ == "__main__":
     print("Starting SecureLife Server...")
