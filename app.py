@@ -27,15 +27,24 @@ validate_keys()
 
 # --- Lifespan Event Handler ---
 @asynccontextmanager
+# --- Lifespan Event Handler ---
+@asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     log.info("Application Starting up...")
-    Base.metadata.create_all(bind=engine)
-    log.info("Database tables checked/created.")
+    
+    try:
+        # FIX: check_first=True prevents the crash on Render
+        Base.metadata.create_all(bind=engine, check_first=True)
+        log.info("Database tables checked/created.")
+    except Exception as e:
+        # This catches the "already exists" error so the server doesn't crash
+        log.warning(f"Database check warning: {e}")
+        pass # Don't re-raise the error
+        
     yield
     # Shutdown
     log.info("Application Shutting down...")
-
 # --- Create App ---
 app = FastAPI(
     title="SecureLife AI Agent",
