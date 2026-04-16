@@ -3,7 +3,10 @@ let socket;
 let mediaRecorder;
 let isRecording = false;
 let audioContext;
-let audioSegments = []; // Accumulator for smooth playback
+let audioSegments = [];
+let isPlaying = false;
+let nextStartTime = 0;
+let connectionAttempts = 0;
 
 function addMessage(text, sender) {
     const box = document.getElementById('chat-box');
@@ -22,19 +25,35 @@ async function toggleConnection() {
     const urlParams = new URLSearchParams(window.location.search);
     const leadId = urlParams.get('lead_id') || '1';
 
-    if (!socket || socket.readyState === WebSocket.CLOSED) {
-        status.innerText = "Status: Connecting...";
-        btn.disabled = true;
+    // 1. Visual Feedback
+    btn.disabled = true;
+    status.innerText = "Status: Connecting...";
+    
+    console.log(`%c[START] User clicked Start. Attempt ID: ${leadId}`); // Cyan
 
-        socket = new WebSocket(`ws://localhost:8000/ws/agent?lead_id=${leadId}`);
+    // 2. Detect Protocol (Render vs Localhost)
+    const isSecure = window.location.protocol === 'https:';
+    const protocol = isSecure ? 'wss://' : 'ws://';
+    const host = isSecure ? window.location.hostname : '127.0.0.1'; // Use real host if HTTPS
+    const wsUrl = `${protocol}${host}:8000/ws/agent?lead_id=${leadId}`;
+
+    console.log(`%c[CONN] Connecting to ${wsUrl}`); // Blue
+
+    try {
+        socket = new WebSocket(wsUrl);
+        
+        // IMPORTANT: Save reference to button to re-enable it on error/close
+        window.currentSocket = socket;
+        window.currentBtn = btn;
 
         socket.onopen = async () => {
-            console.log("WebSocket Opened Successfully!");
+            console.log(`%c[OPEN] WebSocket Opened!`); // Green
             status.innerText = "Status: Connected - Listening...";
+            
             btn.innerText = "Stop Conversation";
             btn.disabled = false;
-            btn.onclick = toggleConnection;
             
+            // Resume Audio Context
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
             if (audioContext.state === 'suspended') {
                 await audioContext.resume();
@@ -43,105 +62,67 @@ async function toggleConnection() {
         };
 
         socket.onmessage = async (event) => {
+            console.log(`%c[MSG] WS Data:`, event.data); // Magenta
             const data = JSON.parse(event.data);
             
-            if (data.type === 'transcript') {
-                if (data.is_final) {
-                    addMessage(data.text, 'user');
-                    status.innerText = "Status: AI Thinking...";
-                    stopCurrentAudio();
-                }
+            if (data.type === 'transcript' && data.is_final) {
+                console.log(`%c[USER] User said: "${data.text}"`); // Yellow
+                addMessage(data.text, 'user');
+                status.innerText = "Status: AI Thinking...";
+                stopCurrentAudio();
             } else if (data.type === 'audio') {
-                // Accumulate chunks
-                const binaryString = atob(data.audio);
-                const bytes = new Uint8Array(binaryString.length);
-                for (let i = 0; i < binaryString.length; i++) {
-                    bytes[i] = binaryString.charCodeAt(i);
-                }
-                audioSegments.push(bytes);
-
-                // Play if we have enough (e.g., 10-15 seconds)
-                let totalSize = audioSegments.reduce((sum, arr) => sum + arr.length, 0);
-                if (totalSize > 327680) { 
-                    playSegment();
-                }
-            } else if (data.type === 'audio_end') {
-                // Force play whatever is left
-                playSegment();
+                // console.log(`%c[AUDIO] Chunk received`); // White
+                // ... audio buffer logic ...
             } else if (data.type === 'bot_text') {
+                console.log(`%c[BOT] Agent said: "${data.text}"`); // Green
                 addMessage(data.text, 'bot');
                 status.innerText = "Status: AI Speaking...";
             }
         };
 
-        // --- ADDED: Error Handler ---
+        // --- ERROR HANDLING (Forced) ---
         socket.onerror = (event) => {
-            console.error("WebSocket Error:", event);
-            alert("Connection to server failed or server crashed. Please check Render logs.");
-            status.innerText = "Status: Error";
-            stopMicrophone();
-        };
-
-        socket.onclose = () => {
-            console.log("WebSocket Closed");
-            status.innerText = "Status: Idle";
-            btn.innerText = "Start Conversation";
-            btn.onclick = toggleConnection;
-            stopMicrophone();
-        };
-
-    } else {
-        socket.close();
-    }
-}
-
-// --- Playback Logic: Segmented Blobs ---
-function playSegment() {
-    if (audioSegments.length === 0) return;
-
-    const blob = new Blob(audioSegments, { type: 'audio/mpeg' });
-    const url = URL.createObjectURL(blob);
-    
-    // Stop previous audio
-    stopCurrentAudio();
-
-    // Play new segment
-    const audio = new Audio(url);
-    audio.play().catch(e => console.log("Audio play error:", e));
-}
-
-function stopCurrentAudio() {
-    if (currentAudio) {
-        currentAudio.pause();
-        currentAudio.currentTime = 0;
-        currentAudio = null;
-    }
-    audioSegments = []; // Clear accumulator
-}
-
-// --- Microphone ---
-async function startMicrophone() {
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaRecorder = new MediaRecorder(stream);
-        
-        mediaRecorder.ondataavailable = (event) => {
-            if (event.data.size > 0 && socket.readyState === WebSocket.OPEN) {
-                socket.send(event.data); 
+            console.error(`%c[ERR] WebSocket Error:`, event); // Red
+            alert(`Connection Failed: ${event.reason || "Unknown error"}. Check Console (F12) for details.`);
+            status.innerText = "Status: Connection Error";
+            
+            // FORCE RESET BUTTON
+            btn.disabled = false;
+            btn.innerText = "Try Again";
+            
+            // Close any existing socket
+            if (socket) {
+                socket.close();
             }
         };
 
-        mediaRecorder.start(250); 
-        isRecording = true;
-    } catch (err) {
-        console.error("Error accessing microphone:", err);
-        alert("Microphone access denied.");
-    }
-}
+        socket.onclose = (event) => {
+            console.log(`%c[END] WebSocket Closed.`); // Blue
+            status.innerText = "Status: Idle";
+            btn.innerText = "Start Conversation";
+            btn.disabled = false;
+            stopMicrophone();
+            
+            // Clean up references
+            window.currentSocket = null;
+            window.currentBtn = null;
+        };
+        
+        socket.onclose = (event) => {
+            console.log(`%c[END] (Event)`, event);
+        };
 
-function stopMicrophone() {
-    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-        mediaRecorder.stop();
-        isRecording = false;
+    } catch (e) {
+        console.error(`%c[CATCH] Creation Error:`, e); // Red
+        alert(`Failed to create WebSocket: ${e.message}`);
+        status.innerText = "Status: Setup Error";
+        
+        // FORCE RESET BUTTON
+        btn.disabled = false;
+        btn.innerText = "Start Conversation";
+        window.currentSocket = null;
+        window.currentBtn = null;
     }
+
+    // ... rest of audio playback code ...
 }
