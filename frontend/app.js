@@ -6,6 +6,7 @@ let audioContext;
 let audioSegments = []; // Accumulator for smooth playback
 let isPlaying = false;
 let nextStartTime = 0;
+let currentAudio = null; // FIXED: Added missing global variable
 
 function addMessage(text, sender) {
     const box = document.getElementById('chat-box');
@@ -19,9 +20,8 @@ function addMessage(text, sender) {
 // --- HELPER: Dynamic URL Detection ---
 function getWebSocketURL() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.hostname === 'localhost' ? '127.0.0.1' : 'secure-life-voice-agent.onrender.com'; // Render Host
-    const port = window.location.port || '8000';
-    return `${protocol}//${host}:${port}/ws/agent`;
+    const host = window.location.host; 
+    return `${protocol}//${host}/ws/agent`;
 }
 
 // --- WebSocket Connection ---
@@ -29,23 +29,32 @@ async function toggleConnection() {
     const btn = document.getElementById('start-btn');
     const status = document.getElementById('status');
     
-    // Dynamic URL
-    const urlParams = new URLSearchParams(window.location.search);
-    const leadId = urlParams.get('lead_id') || '1';
+    // 1. Handle Disconnection (Stop)
+    if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.close();
+        return;
+    }
 
+    // 2. Handle Connection (Start)
     if (!socket || socket.readyState === WebSocket.CLOSED) {
         status.innerText = "Status: Connecting...";
         btn.disabled = true;
 
-        // Use dynamic URL
-        socket = new WebSocket(getWebSocketURL());
+        // Get Lead ID (Default to 1)
+        const urlParams = new URLSearchParams(window.location.search);
+        const leadId = urlParams.get('lead_id') || '1'; 
+
+        // Create URL with lead_id parameter
+        const wsUrl = `${getWebSocketURL()}?lead_id=${leadId}`;
+        console.log("Connecting to:", wsUrl);
+        
+        socket = new WebSocket(wsUrl);
 
         socket.onopen = async () => {
-            console.log("WebSocket Opened Successfully!"); // Debugging
+            console.log("WebSocket Opened Successfully!");
             status.innerText = "Status: Connected - Listening...";
             btn.innerText = "Stop Conversation";
             btn.disabled = false;
-            btn.onclick = toggleConnection;
             
             // Resume Audio Context
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -73,8 +82,7 @@ async function toggleConnection() {
                 }
                 audioSegments.push(bytes);
 
-                // 2. Play if we have enough (e.g., 10-15 seconds)
-                // This prevents breaking by playing long smooth segments
+                // 2. Play if we have enough data
                 let totalSize = audioSegments.reduce((sum, arr) => sum + arr.length, 0);
                 if (totalSize > 327680) { 
                     playSegment();
@@ -88,10 +96,9 @@ async function toggleConnection() {
             }
         };
 
-        // --- NEW ERROR HANDLING (Forced) ---
         socket.onerror = (event) => {
             console.error("WebSocket Error:", event);
-            alert(`Connection failed. Server might be crashing. Please check logs.`);
+            alert(`Connection failed. Please check logs.`);
             status.innerText = "Status: Connection Error";
             stopMicrophone();
             
@@ -101,14 +108,13 @@ async function toggleConnection() {
         };
 
         socket.onclose = () => {
-            console.log("WebSocket Closed"); // Debugging
+            console.log("WebSocket Closed");
             status.innerText = "Status: Idle";
             btn.innerText = "Start Conversation";
-            btn.onclick = toggleConnection;
             stopMicrophone();
         };
-
     }
+} // FIXED: Added missing closing bracket for toggleConnection
 
 // --- Playback Logic: Segmented Blobs ---
 function playSegment() {
@@ -188,4 +194,4 @@ function stopMicrophone() {
         mediaRecorder.stop();
         isRecording = false;
     }
-}}
+}

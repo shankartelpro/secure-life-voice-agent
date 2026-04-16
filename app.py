@@ -2,13 +2,13 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from pathlib import Path
-from starlette.applications import State # IMPORT THIS LINE
-from sqlalchemy.orm import Session # IMPORT THIS LINE
-from sqlalchemy.ext.declarative import declarative_base
-import uvicorn
-from pathlib import Path # IMPORT THIS LINE
+from contextlib import asynccontextmanager # <--- IMPORT THIS
+import asyncio
+import json
+import base64
 
 # Local Imports
 from database import engine, Base, get_db
@@ -17,42 +17,39 @@ from services.llm import get_response_from_llm
 from services.voice import deepgram_transcription_stream, text_to_speech_stream
 from api.routes import router as lead_router
 from utils.logger import log
-from config import validate_keys
+from config import settings, validate_keys
 
-# Validate Keys
+# --- 1. Validate Keys ---
 validate_keys()
 
-# --- Lifespan Event Handler (Standard) ---
-@app.on_event("startup") # Use this standard decorator
-async def startup_event():
+# --- 2. Define Lifespan (Replaces @app.on_event) ---
+# --- 2. Define Lifespan ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup Code
     log.info("Application Starting up...")
-    
-    # FIX: check_first=True prevents Render crash
     try:
-        # check_first=True prevents crash if table exists
-        Base.metadata.create_all(bind=engine, check_first=True)
-        log.info("Database tables checked/created (or already exists).")
+        # FIX: Change 'check_first' to 'checkfirst' (no underscore)
+        Base.metadata.create_all(bind=engine, checkfirst=True)
+        log.info("Database tables checked/created.")
     except Exception as e:
-        # This catches "already exists" error so server doesn't crash
         if "already exists" in str(e):
-            log.info(f"Database already exists, skipping creation. ({e})")
+            log.info(f"Database already exists. ({e})")
         else:
             log.error(f"Database Error: {e}")
-            raise e
-    yield
     
-    # Shutdown
+    yield # App is running
+    
+    # Shutdown Code
     log.info("Application Shutting down...")
 
-# --- Create App ---
+# --- 3. Create App (Pass lifespan here) ---
 app = FastAPI(
     title="SecureLife AI Agent",
-    # Removed lifespan=lifespan # Removed custom usage
+    lifespan=lifespan # <--- ADD THIS
 )
 
-# ... rest of code remains same ...
-
-# CORS Middleware
+# --- 4. Middleware ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -61,12 +58,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include API Routes
+# --- 5. Include API Routes ---
 app.include_router(lead_router, prefix="/api/leads", tags=["leads"])
 
+# --- 6. Routes ---
 @app.get("/")
 def read_root():
-    return {"message": "SecureLife AI Backend is Running"}
+    # Serve the main index.html file automatically
+    frontend_path = Path(__file__).resolve().parent / "frontend"
+    return FileResponse(frontend_path / "index.html")
 
 @app.websocket("/ws/agent")
 async def websocket_endpoint(websocket: WebSocket, lead_id: int = Query(...), db: Session = Depends(get_db)):
@@ -77,7 +77,7 @@ async def websocket_endpoint(websocket: WebSocket, lead_id: int = Query(...), db
     try:
         lead = db.query(Lead).filter(Lead.id == lead_id).first()
         if not lead:
-            log.error(f"Lead ID {lead_id} not found in database. Closing connection.")
+            log.error(f"Lead ID {lead_id} not found. Closing connection.")
             await websocket.close(code=4000, reason="Lead not found")
             return
         log.info(f"Lead Found: {lead.name}")
@@ -87,50 +87,39 @@ async def websocket_endpoint(websocket: WebSocket, lead_id: int = Query(...), db
         return
 
     conversation_history = [] 
-    
-    # Initialize Deepgram variable
     dg_ws = None 
 
     try:
         # 1. Connect to Deepgram
-        log.info("Step 1: Connecting to Deepgram...")
+        log.info("Connecting to Deepgram...")
         dg_ws = await deepgram_transcription_stream()
         
         # 2. Initial Greeting
-        log.info("Step 2: Sending Initial Greeting...")
         if not conversation_history:
             initial_text = "Hi, this is Daniel from SecureLife Insurance. I'm here to help you find the right coverage. Are you looking for family protection today?"
             conversation_history.append({"role": "assistant", "content": initial_text})
             
-            # Send text to UI
             await websocket.send_json({"type": "bot_text", "text": initial_text})
             
-            # Stream TTS
             try:
                 async for chunk in text_to_speech_stream(initial_text):
                     await websocket.send_json({"type": "audio", "audio": base64.b64encode(chunk).decode("utf-8")})
-                
-                # --- ADDED: Signal End of Initial Audio ---
                 await websocket.send_json({"type": "audio_end"})
-                # ---------------------------------------
-                
                 log.info("Initial Greeting Audio Sent.")
             except Exception as e:
                 log.error(f"Failed to stream initial audio: {e}")
 
         # 3. Main Loop
-        log.info("Step 3: Entering Main Listening Loop...")
         while True:
             # A. Receive Audio from Frontend
             try:
                 data = await asyncio.wait_for(websocket.receive_bytes(), timeout=0.1)
-                # Forward audio to Deepgram
                 await dg_ws.send(data)
             except asyncio.TimeoutError:
                 pass 
             except Exception as e:
                 log.warning(f"Error receiving audio from frontend: {e}")
-                break # Stop loop if client disconnects unexpectedly
+                break
             
             # B. Receive Transcript from Deepgram
             try:
@@ -141,7 +130,6 @@ async def websocket_endpoint(websocket: WebSocket, lead_id: int = Query(...), db
                     is_final = message.get("speech_final", False)
                     
                     if transcript:
-                        # Send transcript to UI
                         await websocket.send_json({
                             "type": "transcript", 
                             "text": transcript, 
@@ -149,7 +137,6 @@ async def websocket_endpoint(websocket: WebSocket, lead_id: int = Query(...), db
                         })
                         
                         if is_final:
-                            # C. Process with LLM
                             log.info(f"User said (Final): {transcript}")
                             conversation_history.append({"role": "user", "content": transcript})
                             
@@ -170,40 +157,29 @@ async def websocket_endpoint(websocket: WebSocket, lead_id: int = Query(...), db
                             async for chunk in text_to_speech_stream(response_text):
                                 await websocket.send_json({"type": "audio", "audio": base64.b64encode(chunk).decode("utf-8")})
                             
-                            # --- ADDED: Signal End of Response Audio ---
                             await websocket.send_json({"type": "audio_end"})
-                            # ------------------------------------------
 
             except asyncio.TimeoutError:
                 pass 
             except Exception as e:
                 log.error(f"Error processing Deepgram stream: {e}")
-                # Don't break immediately, might be a transient error
 
     except WebSocketDisconnect:
         log.info("Client disconnected normally.")
     except Exception as e:
-        log.critical(f"!!! UNHANDLED ERROR IN WEBSOCKET LOOP !!!")
-        log.critical(f"Error Type: {type(e).__name__}")
-        log.critical(f"Error Details: {e}")
+        log.critical(f"UNHANDLED ERROR: {e}")
         import traceback
         log.critical(traceback.format_exc())
     finally:
-        # Cleanup
         log.info("Cleaning up connection...")
         if dg_ws:
             try:
                 await dg_ws.close()
-                log.info("Deepgram socket closed.")
             except Exception:
                 pass
-        
-        # Check if socket is still open before closing
         if websocket.client_state.name != "DISCONNECTED":
             await websocket.close()
-        
         log.info("--- WebSocket Connection Closed ---")
-
 
 # --- SERVE FRONTEND ---
 BASE_DIR = Path(__file__).resolve().parent
@@ -211,5 +187,6 @@ FRONTEND_DIR = BASE_DIR / "frontend"
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="static")
 
 if __name__ == "__main__":
+    import uvicorn
     print("Starting SecureLife Server...")
     uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=True)
