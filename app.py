@@ -15,7 +15,7 @@ from services.voice import deepgram_transcription_stream, text_to_speech_stream
 from api.routes import router as lead_router
 from utils.logger import log
 from config import validate_keys
-
+from contextlib import asynccontextmanager
 import json
 import base64
 import asyncio
@@ -24,17 +24,22 @@ import os
 
 validate_keys()
 
-# --- Lifespan Event Handler (Standard) ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     log.info("Application Starting up...")
+    
+    # FIX: Try/Except block to handle "Table exists" gracefully
     try:
-        # check_first=True prevents crash if table exists on Render
-        Base.metadata.create_all(bind=engine, check_first=True)
-        log.info("Database tables checked/created.")
+        # NOTE: We do NOT use 'check_first=True' to avoid Starlette crash.
+        # If the table exists, SQLAlchemy (and Starlette) will handle it gracefully.
+        Base.metadata.create_all(bind=engine)
+        log.info("Database tables checked/created (or already exists).")
     except Exception as e:
-        log.warning(f"Database startup skipped: {e}")
+        # This catches the warning, preventing worker crash
+        log.warning(f"Database startup warning: {e}")
+        pass # Do NOT re-raise error, let server continue
+        
     yield
     # Shutdown
     log.info("Application Shutting down...")
