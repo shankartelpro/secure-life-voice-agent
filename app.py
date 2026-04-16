@@ -3,13 +3,9 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
-from pathlib import Path
+from contextlib import asynccontextmanager
 import uvicorn
-import json
-import base64
-import asyncio
-from dotenv import load_dotenv
-import os
+from pathlib import Path
 
 # Local Imports
 from database import engine, Base, get_db
@@ -18,30 +14,35 @@ from services.llm import get_response_from_llm
 from services.voice import deepgram_transcription_stream, text_to_speech_stream
 from api.routes import router as lead_router
 from utils.logger import log
-
-# Load Environment Variables
-load_dotenv()
 from config import validate_keys
 
-# Validate Keys
+import json
+import base64
+import asyncio
+from dotenv import load_dotenv
+import os
+
 validate_keys()
 
-# --- Startup Event Handler (Standard) ---
-@app.on_event("startup")
-async def startup_event():
+# --- Lifespan Event Handler (Standard) ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
     log.info("Application Starting up...")
-    # FIX: check_first=True prevents Render crash if table exists
-    Base.metadata.create_all(bind=engine, check_first=True)
-    log.info("Database tables checked/created.")
-
-@app.on_event("shutdown")
-async def shutdown_event():
+    try:
+        # check_first=True prevents crash if table exists on Render
+        Base.metadata.create_all(bind=engine, check_first=True)
+        log.info("Database tables checked/created.")
+    except Exception as e:
+        log.warning(f"Database startup skipped: {e}")
+    yield
+    # Shutdown
     log.info("Application Shutting down...")
 
 # --- Create App ---
 app = FastAPI(
     title="SecureLife AI Agent",
-    # We no longer use a custom lifespan, just standard events
+    lifespan=lifespan 
 )
 
 # CORS Middleware
