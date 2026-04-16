@@ -2,8 +2,7 @@
 let socket;
 let mediaRecorder;
 let isRecording = false;
-let audioContext; // Needed for mic, not playback
-let currentAudio = null;
+let audioContext;
 let audioSegments = []; // Accumulator for smooth playback
 
 function addMessage(text, sender) {
@@ -30,6 +29,7 @@ async function toggleConnection() {
         socket = new WebSocket(`ws://localhost:8000/ws/agent?lead_id=${leadId}`);
 
         socket.onopen = async () => {
+            console.log("WebSocket Opened Successfully!");
             status.innerText = "Status: Connected - Listening...";
             btn.innerText = "Stop Conversation";
             btn.disabled = false;
@@ -49,10 +49,10 @@ async function toggleConnection() {
                 if (data.is_final) {
                     addMessage(data.text, 'user');
                     status.innerText = "Status: AI Thinking...";
-                    stopCurrentAudio(); // Stop if talking
+                    stopCurrentAudio();
                 }
             } else if (data.type === 'audio') {
-                // 1. Accumulate chunks
+                // Accumulate chunks
                 const binaryString = atob(data.audio);
                 const bytes = new Uint8Array(binaryString.length);
                 for (let i = 0; i < binaryString.length; i++) {
@@ -60,14 +60,13 @@ async function toggleConnection() {
                 }
                 audioSegments.push(bytes);
 
-                // 2. Play if we have enough (e.g., 320KB = ~10-15 seconds)
-                // This prevents breaking by playing long smooth segments
+                // Play if we have enough (e.g., 10-15 seconds)
                 let totalSize = audioSegments.reduce((sum, arr) => sum + arr.length, 0);
-                if (totalSize > 327680) {
+                if (totalSize > 327680) { 
                     playSegment();
                 }
             } else if (data.type === 'audio_end') {
-                // 3. Force play whatever is left (End of sentence)
+                // Force play whatever is left
                 playSegment();
             } else if (data.type === 'bot_text') {
                 addMessage(data.text, 'bot');
@@ -75,7 +74,16 @@ async function toggleConnection() {
             }
         };
 
+        // --- ADDED: Error Handler ---
+        socket.onerror = (event) => {
+            console.error("WebSocket Error:", event);
+            alert("Connection to server failed or server crashed. Please check Render logs.");
+            status.innerText = "Status: Error";
+            stopMicrophone();
+        };
+
         socket.onclose = () => {
+            console.log("WebSocket Closed");
             status.innerText = "Status: Idle";
             btn.innerText = "Start Conversation";
             btn.onclick = toggleConnection;
@@ -87,11 +95,10 @@ async function toggleConnection() {
     }
 }
 
-// --- New Playback Logic: Segmented Blobs ---
+// --- Playback Logic: Segmented Blobs ---
 function playSegment() {
     if (audioSegments.length === 0) return;
 
-    // Combine all chunks into one Blob
     const blob = new Blob(audioSegments, { type: 'audio/mpeg' });
     const url = URL.createObjectURL(blob);
     
@@ -99,11 +106,8 @@ function playSegment() {
     stopCurrentAudio();
 
     // Play new segment
-    currentAudio = new Audio(url);
-    currentAudio.play().catch(e => console.log("Audio error:", e));
-
-    // Clear accumulator
-    audioSegments = [];
+    const audio = new Audio(url);
+    audio.play().catch(e => console.log("Audio play error:", e));
 }
 
 function stopCurrentAudio() {
@@ -112,6 +116,7 @@ function stopCurrentAudio() {
         currentAudio.currentTime = 0;
         currentAudio = null;
     }
+    audioSegments = []; // Clear accumulator
 }
 
 // --- Microphone ---
