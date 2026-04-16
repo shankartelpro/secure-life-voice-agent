@@ -19,10 +19,8 @@ function addMessage(text, sender) {
 // --- HELPER: Dynamic URL Detection ---
 function getWebSocketURL() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.hostname; // e.g., "secure-life-voice-agent.onrender.com"
-    const port = window.location.port || "8000";
-    
-    // Construct URL dynamically
+    const host = window.location.hostname === 'localhost' ? '127.0.0.1' : 'secure-life-voice-agent.onrender.com'; // Render Host
+    const port = window.location.port || '8000';
     return `${protocol}//${host}:${port}/ws/agent`;
 }
 
@@ -31,7 +29,7 @@ async function toggleConnection() {
     const btn = document.getElementById('start-btn');
     const status = document.getElementById('status');
     
-    // Get Lead ID safely
+    // Dynamic URL
     const urlParams = new URLSearchParams(window.location.search);
     const leadId = urlParams.get('lead_id') || '1';
 
@@ -39,19 +37,17 @@ async function toggleConnection() {
         status.innerText = "Status: Connecting...";
         btn.disabled = true;
 
-        // Use Dynamic URL instead of hardcoded localhost:8000
-        const wsUrl = getWebSocketURL();
-        
-        socket = new WebSocket(wsUrl);
-        console.log(`%c[CONN] Attempting connection to: ${wsUrl}`); // Debugging
+        // Use dynamic URL
+        socket = new WebSocket(getWebSocketURL());
 
         socket.onopen = async () => {
-            console.log(`%c[OPEN] Connection established.`); 
+            console.log("WebSocket Opened Successfully!"); // Debugging
             status.innerText = "Status: Connected - Listening...";
             btn.innerText = "Stop Conversation";
             btn.disabled = false;
             btn.onclick = toggleConnection;
             
+            // Resume Audio Context
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
             if (audioContext.state === 'suspended') {
                 await audioContext.resume();
@@ -77,13 +73,14 @@ async function toggleConnection() {
                 }
                 audioSegments.push(bytes);
 
-                // 2. Play if we have enough
+                // 2. Play if we have enough (e.g., 10-15 seconds)
+                // This prevents breaking by playing long smooth segments
                 let totalSize = audioSegments.reduce((sum, arr) => sum + arr.length, 0);
-                if (totalSize > 327680) { // 32KB - Same as backend
+                if (totalSize > 327680) { 
                     playSegment();
                 }
             } else if (data.type === 'audio_end') {
-                // 3. Force play whatever is left
+                // 3. Force play whatever is left (End of sentence)
                 playSegment();
             } else if (data.type === 'bot_text') {
                 addMessage(data.text, 'bot');
@@ -91,56 +88,68 @@ async function toggleConnection() {
             }
         };
 
-        // --- ADDED: Robust Error Handling for Render ---
+        // --- NEW ERROR HANDLING (Forced) ---
         socket.onerror = (event) => {
-            console.error(`%c[ERR] WebSocket Error:`, event);
-            alert(`Connection Error: ${event.reason || "Unknown error"}. Check if backend is running.`);
+            console.error("WebSocket Error:", event);
+            alert(`Connection failed. Server might be crashing. Please check logs.`);
             status.innerText = "Status: Connection Error";
-            
-            // Attempt reconnect automatically after 3 seconds if it was a network glitch
-            setTimeout(() => {
-                if (socket.readyState === WebSocket.CLOSED) {
-                    console.log("%c[RETRY] Attempting to reconnect...");
-                    toggleConnection(); 
-                }
-            }, 3000);
-        };
-
-        socket.onclose = (event) => {
-            console.log(`%c[END] WebSocket Closed.`); 
-            status.innerText = "Status: Idle";
-            btn.innerText = "Start Conversation";
-            btn.disabled = false;
-            btn.onclick = toggleConnection;
             stopMicrophone();
             
-            // Clear accumulator
-            audioSegments = [];
-            nextStartTime = 0;
+            // Force Reset button to allow retry
+            btn.disabled = false;
+            btn.innerText = "Try Again";
         };
 
-    } else {
-        socket.close();
+        socket.onclose = () => {
+            console.log("WebSocket Closed"); // Debugging
+            status.innerText = "Status: Idle";
+            btn.innerText = "Start Conversation";
+            btn.onclick = toggleConnection;
+            stopMicrophone();
+        };
+
     }
-}
 
 // --- Playback Logic: Segmented Blobs ---
 function playSegment() {
     if (audioSegments.length === 0) return;
 
-    isPlaying = true;
-    const buffer = audioSegments.shift();
+    // Combine all chunks into one Blob
+    const blob = new Blob(audioSegments, { type: 'audio/mpeg' });
+    const url = URL.createObjectURL(blob);
+    
+    // Stop previous audio
+    stopCurrentAudio();
 
-    const source = audioContext.createBufferSource();
-    source.buffer = buffer;
-    source.connect(audioContext.destination);
+    // Play new segment
+    currentAudio = new Audio(url);
+    currentAudio.play().catch(e => console.log("Audio play error:", e));
 
-    // Scheduling for smoothness
-    const startTime = Math.max(audioContext.currentTime, nextStartTime);
-    source.start(startTime);
-    nextStartTime = startTime + buffer.duration;
+    // Play next segment
+    currentAudio.onended = () => {
+        playQueue();
+    };
+}
 
-    source.onended = () => {
+function playQueue() {
+    if (audioSegments.length === 0) {
+        isPlaying = false;
+        return;
+    }
+
+    // Combine all chunks into one Blob
+    const blob = new Blob(audioSegments, { type: 'audio/mpeg' });
+    const url = URL.createObjectURL(blob);
+    
+    // Stop previous audio
+    stopCurrentAudio();
+
+    // Play new segment
+    currentAudio = new Audio(url);
+    currentAudio.play().catch(e => console.log("Audio play error:", e));
+
+    // Play next segment
+    currentAudio.onended = () => {
         playQueue();
     };
 }
@@ -168,9 +177,8 @@ async function startMicrophone() {
 
         mediaRecorder.start(250); 
         isRecording = true;
-        console.log(`%c[MIC] Microphone started.`);
     } catch (err) {
-        console.error(`%c[MIC] Error accessing microphone:`, err);
+        console.error("Error accessing microphone:", err);
         alert("Microphone access denied.");
     }
 }
@@ -180,4 +188,4 @@ function stopMicrophone() {
         mediaRecorder.stop();
         isRecording = false;
     }
-}
+}}

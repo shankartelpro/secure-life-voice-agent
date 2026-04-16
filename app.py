@@ -3,9 +3,12 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
-from contextlib import asynccontextmanager
-import uvicorn
 from pathlib import Path
+from starlette.applications import State # IMPORT THIS LINE
+from sqlalchemy.orm import Session # IMPORT THIS LINE
+from sqlalchemy.ext.declarative import declarative_base
+import uvicorn
+from pathlib import Path # IMPORT THIS LINE
 
 # Local Imports
 from database import engine, Base, get_db
@@ -15,40 +18,39 @@ from services.voice import deepgram_transcription_stream, text_to_speech_stream
 from api.routes import router as lead_router
 from utils.logger import log
 from config import validate_keys
-from contextlib import asynccontextmanager
-import json
-import base64
-import asyncio
-from dotenv import load_dotenv
-import os
 
+# Validate Keys
 validate_keys()
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Startup
+# --- Lifespan Event Handler (Standard) ---
+@app.on_event("startup") # Use this standard decorator
+async def startup_event():
     log.info("Application Starting up...")
     
-    # FIX: Try/Except block to handle "Table exists" gracefully
+    # FIX: check_first=True prevents Render crash
     try:
-        # NOTE: We do NOT use 'check_first=True' to avoid Starlette crash.
-        # If the table exists, SQLAlchemy (and Starlette) will handle it gracefully.
-        Base.metadata.create_all(bind=engine)
+        # check_first=True prevents crash if table exists
+        Base.metadata.create_all(bind=engine, check_first=True)
         log.info("Database tables checked/created (or already exists).")
     except Exception as e:
-        # This catches the warning, preventing worker crash
-        log.warning(f"Database startup warning: {e}")
-        pass # Do NOT re-raise error, let server continue
-        
+        # This catches "already exists" error so server doesn't crash
+        if "already exists" in str(e):
+            log.info(f"Database already exists, skipping creation. ({e})")
+        else:
+            log.error(f"Database Error: {e}")
+            raise e
     yield
+    
     # Shutdown
     log.info("Application Shutting down...")
 
 # --- Create App ---
 app = FastAPI(
     title="SecureLife AI Agent",
-    lifespan=lifespan 
+    # Removed lifespan=lifespan # Removed custom usage
 )
+
+# ... rest of code remains same ...
 
 # CORS Middleware
 app.add_middleware(
